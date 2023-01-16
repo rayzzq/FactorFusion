@@ -1,0 +1,34 @@
+net_name: mlp
+
+params:
+  net_params:
+    layers: [128, 64, 32]
+    act: LeakyReLU
+    input_dim: None
+    output_dim: None
+
+  Xcols: []
+  regYcols: []
+  clsYcols: []
+
+  device: cpu
+  log_steps: 1
+
+  batch_size: 1024
+  lr: 1e-4
+  weight_decay: 0.2
+  max_grad_norm: 0.1
+  accumulate_grad_batches: 2
+  reg_loss: L1
+  cls_loss: BCELL
+
+  length_of_dataloader: None
+
+  save_model_path: './'
+  max_epochs: 6
+  early_stop: 4
+  max_steps: None
+  warmup_steps: 20
+  warmup_proportion: 0.2
+
+
