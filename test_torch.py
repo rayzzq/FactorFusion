@@ -1,6 +1,35 @@
-from model import TorchModel
+from model import TorchModel, TorchModelCV
 import hydra
 from utils import create_fake_data
+
+@hydra.main(config_path="./model/torch_module", config_name="sample_config")
+def test_model_cv(cfg):
+    train_df, test_df, Xcols, regYcols, clsYcols = create_fake_data()
+    
+    # cfg.params["Xcols"] = Xcols
+    # cfg.params["regYcols"] = regYcols
+    # # params["regYcols"] = []
+    # # params["clsYcols"] = clsYcols
+    # cfg.params["clsYcols"] = []
+
+    
+    # model = TorchModelCV.create_cv_with_single_param(cfg, cv=2)
+    # model.fit(train_df)
+    # res = model.predict(test_df)
+    # print("")
+    # print("fitted predict print")
+    # print(res.head(10))
+    # model.save_model(r"C:\Users\Peihan.li\Desktop\FactorFusion\save_models")
+    
+    model = TorchModelCV.load_model(r"C:\Users\Peihan.li\Desktop\FactorFusion\save_models")
+    res = model.predict(test_df)
+    print("reload predict print") 
+    print(res.head(10))
+    
+    print("reload model print")
+    print(model.params)
+    print("")
+    print(model.models)
 
 @hydra.main(config_path="./model/torch_module", config_name="sample_config")
 def test_model(cfg):
@@ -47,4 +76,4 @@ def test_model(cfg):
     print(model.scaler)
     
 if __name__ == "__main__":
-    test_model()
+    test_model_cv()

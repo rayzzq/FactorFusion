@@ -1,1 +1,1 @@
-from .torch_model import TorchModel
+from .torch_model import TorchModel, TorchModelCV

@@ -2,13 +2,16 @@ import re
 import os 
 from collections import defaultdict
 
+import pickle 
 import numpy as np
 import pandas as pd
 import torch
+from copy import deepcopy
+
 from sklearn.metrics import (accuracy_score, f1_score, mean_absolute_error,
                              mean_squared_error, r2_score, roc_auc_score,
                              multilabel_confusion_matrix)
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import RobustScaler, StandardScaler
 from torch import nn
 from torch.optim import AdamW
@@ -46,7 +49,7 @@ class TorchModel(BaseModel):
         
         self.is_fitted = False
 
-    def fit(self, data, eval_data=None):
+    def fit(self, data, eval_data=None, save_model=False):
         Xcols = self.Xcols
         regYcols = self.regYcols
         clsYcols = self.clsYcols
@@ -121,10 +124,11 @@ class TorchModel(BaseModel):
             if res is not None:
                 print("Epoch:{:<4} | valid_reg_loss: {:<5} | valid_cls_loss: {:<10} | valid_cls_hamming: {:<10}".format(epoch, res["reg_loss"], res["cls_loss"], res["hamming"]))
                 
-            if res["loss"] > best_eval_loss:
+            if res["loss"] < best_eval_loss:
                 best_eval_loss = res["loss"]
                 save_name = os.path.join(self.params.save_model_path,
-                                         f"epoch:{epoch}_val-loss:{best_eval_loss}_{self.net_name}.pt")
+                                        #  f"epoch:{epoch}_val-loss:{best_eval_loss}_{self.net_name}.pth")
+                                         f"epoch_{epoch}_val_loss_{best_eval_loss}_{self.net_name}.pth")
                 self.save_model(save_name)
                 early_stop = 0
                 print("Best Model saved.")
@@ -135,22 +139,25 @@ class TorchModel(BaseModel):
                         print("Early stop.")
                         break
                     
-            self.is_fitted = True
+        self.is_fitted = True
+        return save_name
             
     def compute_loss(self, preds, regY, clsY):
         len_reg = len(self.regYcols)
         if len_reg == preds.shape[1]:
             reg_loss = LOSS[self.params.reg_loss](preds, regY)
             cls_loss = torch.Tensor([0]).to(self.params.device)
+            loss = reg_loss
         elif len_reg == 0:
             reg_loss = torch.Tensor([0]).to(self.params.device)
             cls_loss = LOSS[self.params.cls_loss](preds, clsY)
+            loss = cls_loss
         else:
             regY_pred = preds[:, :len_reg]
             clsY_pred = preds[:, len_reg:]
             reg_loss = LOSS[self.params.reg_loss](regY_pred, regY)
             cls_loss = LOSS[self.params.cls_loss](clsY_pred, clsY)
-        loss = 0.8 * reg_loss + 0.2 * cls_loss
+            loss = 0.8 * reg_loss + 0.2 * cls_loss
         return loss, reg_loss, cls_loss
     
     @torch.no_grad()
@@ -344,3 +351,72 @@ class TorchModel(BaseModel):
 
         optimizer = AdamW(optimizer_grouped_parameters, lr=lr)
         return optimizer
+
+
+class TorchModelCV(BaseModel):
+    def __init__(self, params, models = None):
+        self.n_split = len(params)
+        self.params = params
+        for idx in range(self.n_split):
+            if os.path.isdir(params[idx].params['save_model_path']):
+                params[idx].params['save_model_path'] = os.path.join(params[idx].params['save_model_path'], f"FLOD-{idx}")
+                if not os.path.isdir(params[idx].params['save_model_path']):
+                    os.mkdir(params[idx].params['save_model_path'])
+                    
+        if models is None:
+            self.models = [TorchModel(par.params, par.net_name) for par in params]
+        else:
+            self.models = models
+        self.is_fitted = False
+    
+    def fit(self, data):
+        folds = KFold(n_splits=self.n_split, shuffle=True, random_state=0)
+        best_models = []
+        data_copy = data.copy().reset_index(drop=True)
+        
+        for model_idx, (train_idx, val_idx) in zip(range(self.n_split), folds.split(range(len(data_copy)))):
+            train_data = data_copy.iloc[train_idx].reset_index(drop=True)
+            val_data = data_copy.iloc[val_idx].reset_index(drop=True)
+            save_name = self.models[model_idx].fit(train_data, val_data)
+            best_models.append(save_name)
+        self.models = [TorchModel.load_model(model_name) for model_name in best_models]
+        self.is_fitted = True
+
+    def predict(self, test_X):
+        assert self.models is not None
+        assert len(self.models) == self.n_split
+        assert self.is_fitted
+        res = []
+        for idx, model in enumerate(self.models):
+            tmp_ary = model.predict(test_X, return_type = "numpy")
+            res.append(tmp_ary)
+        res = np.mean(res, axis=0)
+        res = pd.DataFrame(res, columns = list(self.models[0].regYcols + self.models[0].clsYcols))
+        return res
+    
+    def save_model(self, path):
+        assert self.is_fitted
+        assert os.path.isdir(path)
+        
+        for idx, model in enumerate(self.models):
+            model.save_model(os.path.join(path, f"model_{idx}.pth"))
+        
+        param_path = os.path.join(path, "params.pth")
+        with open(param_path, "wb") as f:
+            pickle.dump(self.params, f, pickle.HIGHEST_PROTOCOL)
+        
+    @classmethod
+    def load_model(cls, path):
+        assert os.path.isdir(path)
+        param_path = os.path.join(path, "params.pth")
+        with open(param_path, "rb") as f:
+            params = pickle.load(f)
+        models = [TorchModel.load_model(os.path.join(path, f"model_{idx}.pth")) for idx in range(len(params))]
+        obj = cls(params, models)
+        obj.is_fitted = True
+        return obj
+    
+    @classmethod
+    def create_cv_with_single_param(cls, param, cv = 2):
+        params = [deepcopy(param) for _ in range(cv)]
+        return cls(params)
