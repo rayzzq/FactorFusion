@@ -77,8 +77,6 @@ class TorchModel(BaseModel):
         self.model = self.model.to(self.params.device)
         self.model.train()
 
-        len_reg = len(regYcols)
-
         global_steps = 0
         accumulate_grad_batches = self.params.accumulate_grad_batches
         best_eval_loss = 1e10
@@ -97,11 +95,7 @@ class TorchModel(BaseModel):
                 clsY = clsY.to(self.params.device)
 
                 preds = self.model(X)
-                regY_pred = preds[:, :len_reg]
-                clsY_pred = preds[:, len_reg:]
-                reg_loss = LOSS[self.params.reg_loss](regY_pred, regY)
-                cls_loss = LOSS[self.params.cls_loss](clsY_pred, clsY)
-                loss = 0.8 * reg_loss + 0.2 * cls_loss
+                loss, reg_loss, cls_loss = self.compute_loss(preds, regY, clsY)
                 loss.backward()
                 train_loss += loss.item()
                 global_steps += 1
@@ -119,7 +113,7 @@ class TorchModel(BaseModel):
             print("Epoch end, Start evaluation...")
             res = self.evaluate_model(eval_loader)
             if res is not None:
-                print("Epoch:{:<4} | valid_loss: {:<5} | valid_reg_loss: {:<10} | valid_cls_hamming: {:<10}".format(epoch, res["loss"], res["reg_loss"], res["hamming"]))
+                print("Epoch:{:<4} | valid_reg_loss: {:<5} | valid_cls_loss: {:<10} | valid_cls_hamming: {:<10}".format(epoch, res["reg_loss"], res["cls_loss"], res["hamming"]))
                 print("")
                 
             if res["loss"] > best_eval_loss:
@@ -136,7 +130,23 @@ class TorchModel(BaseModel):
                         break
                     
             self.is_fitted = True
-
+            
+    def compute_loss(self, preds, regY, clsY):
+        len_reg = len(self.regYcols)
+        if len_reg == preds.shape[1]:
+            reg_loss = LOSS[self.params.reg_loss](preds, regY)
+            cls_loss = torch.Tensor([0]).to(self.params.device)
+        elif len_reg == 0:
+            reg_loss = torch.Tensor([0]).to(self.params.device)
+            cls_loss = LOSS[self.params.cls_loss](preds, clsY)
+        else:
+            regY_pred = preds[:, :len_reg]
+            clsY_pred = preds[:, len_reg:]
+            reg_loss = LOSS[self.params.reg_loss](regY_pred, regY)
+            cls_loss = LOSS[self.params.cls_loss](clsY_pred, clsY)
+        loss = 0.8 * reg_loss + 0.2 * cls_loss
+        return loss, reg_loss, cls_loss
+    
     @torch.no_grad()
     def evaluate_model(self, eval_loader):
         len_reg = len(self.regYcols)
@@ -159,11 +169,8 @@ class TorchModel(BaseModel):
         all_preds = torch.cat(all_preds, dim=0)
         regYs = torch.cat(regYs, dim=0)
         clsYs = torch.cat(clsYs, dim=0)
-
-        reg_loss = LOSS[self.params.reg_loss](all_preds[:, :len_reg], regYs)
-        cls_loss = LOSS[self.params.cls_loss](all_preds[:, len_reg:], clsYs)
-        loss = 0.8 * reg_loss + 0.2 * cls_loss
-
+        
+        loss, reg_loss, cls_loss = self.compute_loss(all_preds, regYs, clsYs)
         
         # print(clsYs.shape)
         # print(all_preds[:, len_reg:].shape)

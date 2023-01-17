@@ -10,7 +10,9 @@ def test_model(cfg):
     params = cfg.params
     params["Xcols"] = Xcols
     params["regYcols"] = regYcols
-    params["clsYcols"] = clsYcols
+    # params["regYcols"] = []
+    # params["clsYcols"] = clsYcols
+    params["clsYcols"] = []
 
     # print("-" * 10, "Configuation", "-" * 10)
     # for k, v in params.items():
