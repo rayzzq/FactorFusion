@@ -1,4 +1,5 @@
 import re
+import os 
 from collections import defaultdict
 
 import numpy as np
@@ -88,6 +89,9 @@ class TorchModel(BaseModel):
         
         for epoch in range(self.params.max_epochs):
             train_loss = 0
+            self.model.train()
+            optimizer.zero_grad()
+            
             for idx, (X, regY, clsY) in enumerate(train_loader):
 
                 X = X.to(self.params.device)
@@ -95,16 +99,18 @@ class TorchModel(BaseModel):
                 clsY = clsY.to(self.params.device)
 
                 preds = self.model(X)
-                loss, reg_loss, cls_loss = self.compute_loss(preds, regY, clsY)
+                loss, _, _ = self.compute_loss(preds, regY, clsY)
                 loss.backward()
-                train_loss += loss.item()
-                global_steps += 1
                 
                 if (idx + 1) % accumulate_grad_batches == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
+                    if self.params.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
                     optimizer.step()
                     scheduler.step()
-                    self.model.zero_grad()
+                    optimizer.zero_grad()
+
+                train_loss += loss.item()
+                global_steps += 1
                     
 
                 if (global_steps + 1) % self.params.log_steps == 0:
@@ -114,11 +120,11 @@ class TorchModel(BaseModel):
             res = self.evaluate_model(eval_loader)
             if res is not None:
                 print("Epoch:{:<4} | valid_reg_loss: {:<5} | valid_cls_loss: {:<10} | valid_cls_hamming: {:<10}".format(epoch, res["reg_loss"], res["cls_loss"], res["hamming"]))
-                print("")
                 
             if res["loss"] > best_eval_loss:
                 best_eval_loss = res["loss"]
-                save_name = self.params.save_model_path + "epoch:{}_step:_evalloss:{}_netname:{}.pt".format(epoch + 1, res["loss"], self.net_name)
+                save_name = os.path.join(self.params.save_model_path,
+                                         f"epoch:{epoch}_val-loss:{best_eval_loss}_{self.net_name}.pt")
                 self.save_model(save_name)
                 early_stop = 0
                 print("Best Model saved.")
